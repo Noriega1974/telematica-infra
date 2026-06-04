@@ -22,13 +22,13 @@
     <div class="card">
       <h2>⚡ Generador de Carga — Auto Scaling Test</h2>
       <p style="color:#64748b;margin-bottom:24px;font-size:14px">
-        Este botón estresa el CPU de <strong><%= instanceId %></strong> al 90% por el tiempo seleccionado.
-        Si el CPU promedio del ASG supera el 70% durante ~3 minutos, AWS lanza instancias adicionales automáticamente.
+        Estresa el CPU de <strong><%= instanceId %></strong> al 90%.
+        Si el promedio del ASG supera 70% por ~3 minutos, AWS lanza instancias nuevas automáticamente.
       </p>
 
       <div class="stress-controls">
         <div class="field">
-          <label>Duración del stress</label>
+          <label>Duración</label>
           <select id="segundos">
             <option value="60">60 segundos</option>
             <option value="120" selected>120 segundos</option>
@@ -47,27 +47,25 @@
     <div class="card">
       <h2>📋 Cómo verificar el Auto Scaling</h2>
       <ol class="instrucciones">
-        <li>Hacé clic en <strong>Iniciar Stress Test</strong> en esta instancia</li>
-        <li>Abrí otra pestaña del ALB y refrescá — vas a ver la <strong>otra</strong> instancia (también podés iniciar stress allá)</li>
-        <li>En AWS Console → EC2 → Auto Scaling Groups → <strong>telematica-asg</strong> → Activity</li>
-        <li>En ~3 minutos deberías ver eventos de <strong>"Launching a new EC2 instance"</strong></li>
-        <li>El ASG puede escalar hasta <strong>4 instancias</strong> máximo</li>
+        <li>Iniciá el stress en <strong>esta instancia</strong></li>
+        <li>Abrí otra pestaña del ALB y refrescá — iniciá stress en la <strong>otra instancia</strong> también</li>
+        <li>AWS Console → EC2 → Auto Scaling Groups → <strong>telematica-asg</strong> → Activity</li>
+        <li>En ~3 minutos verás <em>"Launching a new EC2 instance"</em></li>
+        <li>El ASG puede escalar hasta <strong>4 instancias</strong></li>
       </ol>
-
       <div class="info-box">
         <strong>URL del ALB:</strong><br>
-        <code>http://telematica-alb-1367667607.us-east-1.elb.amazonaws.com</code><br><br>
-        <strong>Tip:</strong> Refrescá varias veces para ver el balanceo entre instancias — el banner superior cambia de IP.
+        <code>http://telematica-alb-1367667607.us-east-1.elb.amazonaws.com</code>
       </div>
     </div>
   </div>
 
   <script>
+    let pollInterval = null;
+
     async function iniciarStress() {
       const btn = document.getElementById('btn-stress');
-      const resultado = document.getElementById('resultado');
       const segundos = document.getElementById('segundos').value;
-
       btn.disabled = true;
       btn.textContent = '⏳ Iniciando...';
 
@@ -78,34 +76,60 @@
           body: `segundos=${segundos}`
         });
         const data = await res.json();
-
-        resultado.style.display = 'block';
-        resultado.className = 'stress-result ok';
-        resultado.innerHTML = `
-          ✅ <strong>${data.mensaje}</strong><br>
-          Monitoreá el CPU en AWS Console → EC2 → Auto Scaling Groups → telematica-asg → Monitoring
-        `;
-
-        // Countdown
-        let restante = parseInt(segundos);
-        const interval = setInterval(() => {
-          restante--;
-          btn.textContent = `🔥 Corriendo... ${restante}s`;
-          if (restante <= 0) {
-            clearInterval(interval);
-            btn.disabled = false;
-            btn.textContent = '🔥 Iniciar Stress Test';
-          }
-        }, 1000);
-
+        if (data.ok) startPolling();
       } catch (err) {
-        resultado.style.display = 'block';
-        resultado.className = 'stress-result error';
-        resultado.innerHTML = `❌ Error: ${err.message}`;
+        mostrarError(err.message);
         btn.disabled = false;
         btn.textContent = '🔥 Iniciar Stress Test';
       }
     }
+
+    function startPolling() {
+      if (pollInterval) clearInterval(pollInterval);
+      pollInterval = setInterval(async () => {
+        try {
+          const res = await fetch('/stress/status');
+          const data = await res.json();
+          actualizarUI(data);
+        } catch (e) {}
+      }, 1000);
+    }
+
+    function actualizarUI(data) {
+      const btn = document.getElementById('btn-stress');
+      const resultado = document.getElementById('resultado');
+
+      if (data.running && data.remaining > 0) {
+        btn.disabled = true;
+        btn.textContent = `🔥 Corriendo... ${data.remaining}s`;
+        resultado.style.display = 'block';
+        resultado.className = 'stress-result ok';
+        resultado.innerHTML = `✅ <strong>Stress activo en ${data.instanceId}</strong> — ${data.remaining}s restantes<br>
+          Monitoreá el CPU en AWS Console → EC2 → Auto Scaling Groups → telematica-asg → Monitoring`;
+      } else {
+        btn.disabled = false;
+        btn.textContent = '🔥 Iniciar Stress Test';
+        if (resultado.style.display !== 'none' && resultado.classList.contains('ok')) {
+          resultado.innerHTML = '✅ <strong>Stress finalizado.</strong> Revisá si el ASG escaló en AWS Console.';
+        }
+        if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+      }
+    }
+
+    function mostrarError(msg) {
+      const resultado = document.getElementById('resultado');
+      resultado.style.display = 'block';
+      resultado.className = 'stress-result error';
+      resultado.innerHTML = `❌ Error: ${msg}`;
+    }
+
+    // Al cargar la página, consultar si hay stress activo
+    fetch('/stress/status').then(r => r.json()).then(data => {
+      if (data.running && data.remaining > 0) {
+        actualizarUI(data);
+        startPolling();
+      }
+    });
   </script>
 
 </body>
