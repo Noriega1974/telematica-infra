@@ -45,6 +45,13 @@ async function initDB() {
         created_at          TIMESTAMP DEFAULT NOW()
       )
     `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS stress_state (
+        instance_id VARCHAR(100) PRIMARY KEY,
+        end_time    BIGINT,
+        updated_at  TIMESTAMP DEFAULT NOW()
+      )
+    `);
     console.log('✅ Tabla usuarios lista');
   } catch (err) {
     console.error('⚠️  RDS no disponible (normal en local):', err.message);
@@ -191,50 +198,84 @@ app.post('/usuarios/:id/eliminar', async (req, res) => {
   }
 });
 
-// GET /stress — página de stress test
+// Estado del stress — persiste en memoria del proceso
+const { spawn } = require('child_process');
+const { Worker } = require('worker_threads');
+let stressState = { running: false, endTime: null, startTime: null };
+
+// GET /stress — página
 app.get('/stress', (req, res) => {
-  res.render('stress', {
-    instanceId: INSTANCE_ID,
-    instanceIp: INSTANCE_IP,
-  });
+  res.render('stress', { instanceId: INSTANCE_ID, instanceIp: INSTANCE_IP });
+});
+
+// GET /stress/status — estado actual (el cliente lo consulta cada segundo)
+app.get('/stress/status', async (req, res) => {
+  const targetInstance = req.query.instance || INSTANCE_ID;
+  let remaining = 0;
+
+  try {
+    const { rows } = await pool.query(
+      'SELECT end_time FROM stress_state WHERE instance_id = $1', [targetInstance]
+    );
+    if (rows[0]) {
+      remaining = Math.max(0, Math.ceil((rows[0].end_time - Date.now()) / 1000));
+    }
+  } catch (e) {
+    // fallback a estado en memoria si la DB no está disponible
+    if (targetInstance === INSTANCE_ID && stressState.endTime) {
+      remaining = Math.max(0, Math.ceil((stressState.endTime - Date.now()) / 1000));
+    }
+  }
+
+  const running = remaining > 0;
+  if (!running && targetInstance === INSTANCE_ID) stressState.running = false;
+  res.json({ running, remaining, instanceId: INSTANCE_ID });
 });
 
 // POST /stress/start — inicia stress en background
-app.post('/stress/start', (req, res) => {
+app.post('/stress/start', async (req, res) => {
   const segundos = Math.min(parseInt(req.body.segundos) || 120, 300);
-  const { exec } = require('child_process');
+  const ms = segundos * 1000;
+  const endTime = Date.now() + ms;
+  stressState = { running: true, endTime, startTime: Date.now() };
+  setTimeout(() => { stressState = { running: false, endTime: null, startTime: null }; }, ms + 2000);
 
-  // Intentar stress-ng, si no está instalar y correr loop JS
-  exec(`which stress-ng`, (err) => {
-    if (!err) {
-      exec(`stress-ng --cpu 0 --cpu-load 90 --timeout ${segundos}s &`);
-    } else {
-      // Fallback: loop JS en worker threads
-      const { Worker, isMainThread, workerData } = require('worker_threads');
-      if (isMainThread) {
-        const os = require('os');
-        const cpus = os.cpus().length;
-        for (let i = 0; i < cpus; i++) {
-          const worker = new Worker(`
-            const { workerData } = require('worker_threads');
-            const end = Date.now() + workerData.ms;
-            while (Date.now() < end) { Math.random() * Math.random(); }
-          `, { eval: true, workerData: { ms: segundos * 1000 } });
+  try {
+    await pool.query(`
+      INSERT INTO stress_state (instance_id, end_time)
+      VALUES ($1, $2)
+      ON CONFLICT (instance_id) DO UPDATE SET end_time = $2, updated_at = NOW()
+    `, [INSTANCE_ID, endTime]);
+  } catch (e) { /* no crítico — el in-memory sigue funcionando */ }
+
+  const cpus = os.cpus().length;
+
+  // Worker threads: mecanismo PRINCIPAL — no depende de apt-get, siempre funciona
+  for (let i = 0; i < cpus; i++) {
+    new Worker(`
+      const end = Date.now() + ${ms};
+      let x = ${Math.random() + 0.1};
+      while (Date.now() < end) {
+        for (let j = 0; j < 2000000; j++) {
+          x = Math.sin(x) * Math.cos(x + 1) * Math.tan(x + 2);
+          if (!isFinite(x)) x = 0.5;
         }
       }
-    }
-  });
+    `, { eval: true });
+  }
 
-  res.json({ ok: true, mensaje: `Stress iniciado por ${segundos} segundos en ${INSTANCE_ID}`, segundos });
+  // stress-ng: boost adicional si está instalado (no crítico si falla)
+  const proc = spawn('stress-ng', ['--cpu', String(cpus), '--timeout', `${segundos}s`],
+    { detached: true, stdio: 'ignore' });
+  proc.on('error', () => {});
+  proc.unref();
+
+  res.json({ ok: true, endTime, segundos, instanceId: INSTANCE_ID });
 });
 
 // GET /health — para el ALB health check
 app.get('/health', (req, res) => {
-  res.status(200).json({
-    status:     'ok',
-    instanceId: INSTANCE_ID,
-    instanceIp: INSTANCE_IP,
-  });
+  res.status(200).json({ status: 'ok', instanceId: INSTANCE_ID, instanceIp: INSTANCE_IP });
 });
 
 // ─── ARRANQUE ─────────────────────────────────────────────────────────────────
