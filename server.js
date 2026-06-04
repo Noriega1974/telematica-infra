@@ -213,25 +213,23 @@ app.get('/stress/status', (req, res) => {
 // POST /stress/start — inicia stress en background
 app.post('/stress/start', (req, res) => {
   const segundos = Math.min(parseInt(req.body.segundos) || 120, 300);
-  stressState = { running: true, endTime: Date.now() + segundos * 1000 };
-  setTimeout(() => { stressState = { running: false, endTime: null }; }, (segundos + 2) * 1000);
+  const ms = segundos * 1000;
+  stressState = { running: true, endTime: Date.now() + ms };
+  setTimeout(() => { stressState = { running: false, endTime: null }; }, ms + 2000);
 
+  // Un worker por CPU — loop matemático pesado garantizado
   const cpus = os.cpus().length;
-
-  // Intentar stress-ng primero
-  const proc = spawn('stress-ng', ['--cpu', String(cpus), '--cpu-load', '90', '--timeout', `${segundos}s`], {
-    detached: true, stdio: 'ignore',
-  });
-  proc.on('error', () => {
-    // Fallback: worker threads JS
-    for (let i = 0; i < cpus; i++) {
-      new Worker(`
-        const end = Date.now() + ${segundos * 1000};
-        while (Date.now() < end) { Math.sqrt(Math.random() * 99999); }
-      `, { eval: true });
-    }
-  });
-  proc.unref();
+  for (let i = 0; i < cpus; i++) {
+    new Worker(`
+      const end = Date.now() + ${ms};
+      let x = Math.random() + 1;
+      while (Date.now() < end) {
+        for (let j = 0; j < 500000; j++) {
+          x = Math.sin(x + 1.1) * Math.cos(x - 0.9) + Math.sqrt(Math.abs(x) + 0.01);
+        }
+      }
+    `, { eval: true });
+  }
 
   res.json({ ok: true, endTime: stressState.endTime, segundos, instanceId: INSTANCE_ID });
 });
