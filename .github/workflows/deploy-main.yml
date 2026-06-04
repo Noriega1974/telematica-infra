@@ -25,14 +25,14 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Obtener IPs de instancias del ASG
-        id: get-ips
+        id: get-instances
         run: |
           IPS=$(aws ec2 describe-instances \
-            --filters \
-              "Name=tag:aws:autoscaling:groupName,Values=${{ secrets.ASG_NAME }}" \
-              "Name=instance-state-name,Values=running" \
+            --filter "Name=tag:aws:autoscaling:groupName,Values=${{ secrets.ASG_NAME }}" \
+            "Name=instance-state-name,Values=running" \
             --query 'Reservations[*].Instances[*].PublicIpAddress' \
-            --output text | tr '\t\n' '  ' | xargs)
+            --output text | paste -sd " " -)
+          
           echo "instance_ips=$IPS" >> $GITHUB_OUTPUT
           echo "Instancias encontradas: $IPS"
 
