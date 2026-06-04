@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Telemática — Stress Test</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+  <div class="banner">
+    <span>🖥️ Instancia: <strong><%= instanceId %></strong></span>
+    <span>🌐 IP: <strong><%= instanceIp %></strong></span>
+  </div>
+
+  <div class="container">
+    <div class="nav-tabs">
+      <a href="/" class="tab">👥 Usuarios</a>
+      <a href="/stress" class="tab active">⚡ Stress Test</a>
+    </div>
+
+    <div class="card">
+      <h2>⚡ Generador de Carga — Auto Scaling Test</h2>
+      <p style="color:#64748b;margin-bottom:24px;font-size:14px">
+        Este botón estresa el CPU de <strong><%= instanceId %></strong> al 90% por el tiempo seleccionado.
+        Si el CPU promedio del ASG supera el 70% durante ~3 minutos, AWS lanza instancias adicionales automáticamente.
+      </p>
+
+      <div class="stress-controls">
+        <div class="field">
+          <label>Duración del stress</label>
+          <select id="segundos">
+            <option value="60">60 segundos</option>
+            <option value="120" selected>120 segundos</option>
+            <option value="180">180 segundos</option>
+            <option value="300">5 minutos</option>
+          </select>
+        </div>
+        <button id="btn-stress" class="btn primary" onclick="iniciarStress()">
+          🔥 Iniciar Stress Test
+        </button>
+      </div>
+
+      <div id="resultado" class="stress-result" style="display:none"></div>
+    </div>
+
+    <div class="card">
+      <h2>📋 Cómo verificar el Auto Scaling</h2>
+      <ol class="instrucciones">
+        <li>Hacé clic en <strong>Iniciar Stress Test</strong> en esta instancia</li>
+        <li>Abrí otra pestaña del ALB y refrescá — vas a ver la <strong>otra</strong> instancia (también podés iniciar stress allá)</li>
+        <li>En AWS Console → EC2 → Auto Scaling Groups → <strong>telematica-asg</strong> → Activity</li>
+        <li>En ~3 minutos deberías ver eventos de <strong>"Launching a new EC2 instance"</strong></li>
+        <li>El ASG puede escalar hasta <strong>4 instancias</strong> máximo</li>
+      </ol>
+
+      <div class="info-box">
+        <strong>URL del ALB:</strong><br>
+        <code>http://telematica-alb-1367667607.us-east-1.elb.amazonaws.com</code><br><br>
+        <strong>Tip:</strong> Refrescá varias veces para ver el balanceo entre instancias — el banner superior cambia de IP.
+      </div>
+    </div>
+  </div>
+
+  <script>
+    async function iniciarStress() {
+      const btn = document.getElementById('btn-stress');
+      const resultado = document.getElementById('resultado');
+      const segundos = document.getElementById('segundos').value;
+
+      btn.disabled = true;
+      btn.textContent = '⏳ Iniciando...';
+
+      try {
+        const res = await fetch('/stress/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: `segundos=${segundos}`
+        });
+        const data = await res.json();
+
+        resultado.style.display = 'block';
+        resultado.className = 'stress-result ok';
+        resultado.innerHTML = `
+          ✅ <strong>${data.mensaje}</strong><br>
+          Monitoreá el CPU en AWS Console → EC2 → Auto Scaling Groups → telematica-asg → Monitoring
+        `;
+
+        // Countdown
+        let restante = parseInt(segundos);
+        const interval = setInterval(() => {
+          restante--;
+          btn.textContent = `🔥 Corriendo... ${restante}s`;
+          if (restante <= 0) {
+            clearInterval(interval);
+            btn.disabled = false;
+            btn.textContent = '🔥 Iniciar Stress Test';
+          }
+        }, 1000);
+
+      } catch (err) {
+        resultado.style.display = 'block';
+        resultado.className = 'stress-result error';
+        resultado.innerHTML = `❌ Error: ${err.message}`;
+        btn.disabled = false;
+        btn.textContent = '🔥 Iniciar Stress Test';
+      }
+    }
+  </script>
+
+</body>
+</html>
