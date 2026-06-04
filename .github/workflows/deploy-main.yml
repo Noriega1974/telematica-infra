@@ -5,6 +5,9 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   deploy:
     name: Deploy to ASG instances
@@ -22,14 +25,14 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Obtener IPs de instancias del ASG
-        id: get-ips
+        id: get-ips   # <--- CORREGIDO: Ahora se llama get-ips para que coincida abajo
         run: |
           IPS=$(aws ec2 describe-instances \
-            --filters \
-              "Name=tag:aws:autoscaling:groupName,Values=${{ secrets.ASG_NAME }}" \
-              "Name=instance-state-name,Values=running" \
+            --filter "Name=tag:aws:autoscaling:groupName,Values=${{ secrets.ASG_NAME }}" \
+            "Name=instance-state-name,Values=running" \
             --query 'Reservations[*].Instances[*].PublicIpAddress' \
-            --output text)
+            --output text | paste -sd " " -)
+          
           echo "instance_ips=$IPS" >> $GITHUB_OUTPUT
           echo "Instancias encontradas: $IPS"
 
@@ -53,7 +56,7 @@ jobs:
 
       - name: Verificar deploy
         run: |
-          sleep 8
+          sleep 15  # Le damos unos segundos más por cortesía para que conecte a la BD antes del test
           ALL_OK=true
           for IP in ${{ steps.get-ips.outputs.instance_ips }}; do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 http://$IP:3000/health)
