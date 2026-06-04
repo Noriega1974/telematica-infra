@@ -25,7 +25,7 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Obtener IPs de instancias del ASG
-        id: get-ips   # <--- CORREGIDO: Ahora se llama get-ips para que coincida abajo
+        id: get-ips
         run: |
           IPS=$(aws ec2 describe-instances \
             --filter "Name=tag:aws:autoscaling:groupName,Values=${{ secrets.ASG_NAME }}" \
@@ -50,13 +50,30 @@ jobs:
               -o StrictHostKeyChecking=no \
               -o ConnectTimeout=30 \
               ubuntu@$IP \
-              "sudo apt-get update -qq && sudo apt-get install -y stress-ng; if [ -d /app/.git ]; then cd /app && git pull origin main; else sudo rm -rf /app && sudo git clone https://github.com/Noriega1974/telematica-infra.git /app && sudo chown -R ubuntu:ubuntu /app; fi && cd /app && npm install --production && (pm2 restart telematica-app --update-env 2>/dev/null || pm2 start /app/server.js --name telematica-app) && pm2 status"
+              "sudo apt-get update -qq && \
+               sudo apt-get install -y stress-ng && \
+               if [ -d /app/.git ]; then \
+                 cd /app && git pull origin main; \
+               else \
+                 sudo rm -rf /app && \
+                 sudo git clone https://github.com/Noriega1974/telematica-infra.git /app && \
+                 sudo chown -R ubuntu:ubuntu /app; \
+               fi && \
+               cd /app && \
+               echo 'DB_HOST=${{ secrets.DB_HOST }}' > .env && \
+               echo 'DB_NAME=${{ secrets.DB_NAME }}' >> .env && \
+               echo 'DB_USER=${{ secrets.DB_USER }}' >> .env && \
+               echo 'DB_PASSWORD=${{ secrets.DB_PASSWORD }}' >> .env && \
+               echo 'LAMBDA_BIENVENIDA=${{ secrets.LAMBDA_BIENVENIDA }}' >> .env && \
+               npm install --production && \
+               (pm2 restart telematica-app --update-env 2>/dev/null || pm2 start /app/server.js --name telematica-app) && \
+               pm2 status"
             echo "=== Listo: $IP ==="
           done
 
       - name: Verificar deploy
         run: |
-          sleep 15  # Le damos unos segundos más por cortesía para que conecte a la BD antes del test
+          sleep 15
           ALL_OK=true
           for IP in ${{ steps.get-ips.outputs.instance_ips }}; do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 http://$IP:3000/health)
