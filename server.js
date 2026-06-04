@@ -191,6 +191,43 @@ app.post('/usuarios/:id/eliminar', async (req, res) => {
   }
 });
 
+// GET /stress — página de stress test
+app.get('/stress', (req, res) => {
+  res.render('stress', {
+    instanceId: INSTANCE_ID,
+    instanceIp: INSTANCE_IP,
+  });
+});
+
+// POST /stress/start — inicia stress en background
+app.post('/stress/start', (req, res) => {
+  const segundos = Math.min(parseInt(req.body.segundos) || 120, 300);
+  const { exec } = require('child_process');
+
+  // Intentar stress-ng, si no está instalar y correr loop JS
+  exec(`which stress-ng`, (err) => {
+    if (!err) {
+      exec(`stress-ng --cpu 0 --cpu-load 90 --timeout ${segundos}s &`);
+    } else {
+      // Fallback: loop JS en worker threads
+      const { Worker, isMainThread, workerData } = require('worker_threads');
+      if (isMainThread) {
+        const os = require('os');
+        const cpus = os.cpus().length;
+        for (let i = 0; i < cpus; i++) {
+          const worker = new Worker(`
+            const { workerData } = require('worker_threads');
+            const end = Date.now() + workerData.ms;
+            while (Date.now() < end) { Math.random() * Math.random(); }
+          `, { eval: true, workerData: { ms: segundos * 1000 } });
+        }
+      }
+    }
+  });
+
+  res.json({ ok: true, mensaje: `Stress iniciado por ${segundos} segundos en ${INSTANCE_ID}`, segundos });
+});
+
 // GET /health — para el ALB health check
 app.get('/health', (req, res) => {
   res.status(200).json({

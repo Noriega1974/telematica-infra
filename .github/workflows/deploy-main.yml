@@ -1,16 +1,19 @@
-name: Deploy to ASG via SSM
+name: Deploy to Production
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   deploy:
-    name: Deploy to EC2 instances
+    name: Deploy to ASG instances
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -18,26 +21,47 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Get InService instances from ASG
-        id: get-instances
+      - name: Obtener IPs de instancias del ASG
+        id: get-ips
         run: |
-          INSTANCE_IDS=$(aws autoscaling describe-auto-scaling-groups \
-            --auto-scaling-group-names ${{ secrets.ASG_NAME }} \
-            --query "AutoScalingGroups[0].Instances[?LifecycleState=='InService'].InstanceId" \
-            --output text | tr '\t' ',')
-          echo "instance_ids=$INSTANCE_IDS" >> $GITHUB_OUTPUT
-          echo "Instancias encontradas: $INSTANCE_IDS"
+          IPS=$(aws ec2 describe-instances \
+            --filters \
+              "Name=tag:aws:autoscaling:groupName,Values=${{ secrets.ASG_NAME }}" \
+              "Name=instance-state-name,Values=running" \
+            --query 'Reservations[*].Instances[*].PublicIpAddress' \
+            --output text)
+          echo "instance_ips=$IPS" >> $GITHUB_OUTPUT
+          echo "Instancias encontradas: $IPS"
 
-      - name: Deploy via SSM Run Command
+      - name: Configurar SSH
         run: |
-          aws ssm send-command \
-            --instance-ids ${{ steps.get-instances.outputs.instance_ids }} \
-            --document-name "AWS-RunShellScript" \
-            --parameters 'commands=[
-              "cd /app",
-              "git pull origin main",
-              "npm install --production",
-              "pm2 restart telematica-app"
-            ]' \
-            --comment "Deploy desde GitHub Actions - $(date)" \
-            --output text
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+      - name: Deploy a cada instancia
+        run: |
+          for IP in ${{ steps.get-ips.outputs.instance_ips }}; do
+            echo "=== Deploying a $IP ==="
+            ssh -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=no \
+              -o ConnectTimeout=30 \
+              ubuntu@$IP \
+              "cd /app && git pull origin main && npm install --production && pm2 restart telematica-app --update-env && pm2 status"
+            echo "=== Listo: $IP ==="
+          done
+
+      - name: Verificar deploy
+        run: |
+          sleep 8
+          ALL_OK=true
+          for IP in ${{ steps.get-ips.outputs.instance_ips }}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 http://$IP:3000/health)
+            if [ "$STATUS" = "200" ]; then
+              echo "ok $IP"
+            else
+              echo "fail $IP status $STATUS"
+              ALL_OK=false
+            fi
+          done
+          if [ "$ALL_OK" = "false" ]; then exit 1; fi
