@@ -50,7 +50,7 @@ jobs:
               -o StrictHostKeyChecking=no \
               -o ConnectTimeout=30 \
               ubuntu@$IP \
-              "sudo apt-get update -qq && sudo apt-get install -y stress-ng; cd /app && git pull origin main && npm install --production && pm2 restart telematica-app --update-env && pm2 status"
+              "sudo apt-get update -qq && sudo apt-get install -y stress-ng; if [ -d /app/.git ]; then cd /app && git pull origin main; else sudo git clone https://github.com/Noriega1974/telematica-infra.git /app && sudo chown -R ubuntu:ubuntu /app && cd /app; fi && npm install --production && (pm2 restart telematica-app --update-env 2>/dev/null || pm2 start /app/server.js --name telematica-app) && pm2 status"
             echo "=== Listo: $IP ==="
           done
 
