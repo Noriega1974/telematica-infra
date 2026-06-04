@@ -191,41 +191,49 @@ app.post('/usuarios/:id/eliminar', async (req, res) => {
   }
 });
 
-// GET /stress — página de stress test
+// Estado del stress — persiste en memoria del proceso
+const { spawn } = require('child_process');
+const { Worker } = require('worker_threads');
+let stressState = { running: false, endTime: null };
+
+// GET /stress — página
 app.get('/stress', (req, res) => {
-  res.render('stress', {
-    instanceId: INSTANCE_ID,
-    instanceIp: INSTANCE_IP,
-  });
+  res.render('stress', { instanceId: INSTANCE_ID, instanceIp: INSTANCE_IP });
+});
+
+// GET /stress/status — estado actual (el cliente lo consulta cada segundo)
+app.get('/stress/status', (req, res) => {
+  const remaining = stressState.endTime
+    ? Math.max(0, Math.ceil((stressState.endTime - Date.now()) / 1000))
+    : 0;
+  if (remaining === 0) stressState.running = false;
+  res.json({ running: stressState.running, remaining, instanceId: INSTANCE_ID, instanceIp: INSTANCE_IP });
 });
 
 // POST /stress/start — inicia stress en background
 app.post('/stress/start', (req, res) => {
   const segundos = Math.min(parseInt(req.body.segundos) || 120, 300);
-  const { exec } = require('child_process');
+  stressState = { running: true, endTime: Date.now() + segundos * 1000 };
+  setTimeout(() => { stressState = { running: false, endTime: null }; }, (segundos + 2) * 1000);
 
-  // Intentar stress-ng, si no está instalar y correr loop JS
-  exec(`which stress-ng`, (err) => {
-    if (!err) {
-      exec(`stress-ng --cpu 0 --cpu-load 90 --timeout ${segundos}s &`);
-    } else {
-      // Fallback: loop JS en worker threads
-      const { Worker, isMainThread, workerData } = require('worker_threads');
-      if (isMainThread) {
-        const os = require('os');
-        const cpus = os.cpus().length;
-        for (let i = 0; i < cpus; i++) {
-          const worker = new Worker(`
-            const { workerData } = require('worker_threads');
-            const end = Date.now() + workerData.ms;
-            while (Date.now() < end) { Math.random() * Math.random(); }
-          `, { eval: true, workerData: { ms: segundos * 1000 } });
-        }
-      }
+  const cpus = os.cpus().length;
+
+  // Intentar stress-ng primero
+  const proc = spawn('stress-ng', ['--cpu', String(cpus), '--cpu-load', '90', '--timeout', `${segundos}s`], {
+    detached: true, stdio: 'ignore',
+  });
+  proc.on('error', () => {
+    // Fallback: worker threads JS
+    for (let i = 0; i < cpus; i++) {
+      new Worker(`
+        const end = Date.now() + ${segundos * 1000};
+        while (Date.now() < end) { Math.sqrt(Math.random() * 99999); }
+      `, { eval: true });
     }
   });
+  proc.unref();
 
-  res.json({ ok: true, mensaje: `Stress iniciado por ${segundos} segundos en ${INSTANCE_ID}`, segundos });
+  res.json({ ok: true, endTime: stressState.endTime, segundos, instanceId: INSTANCE_ID });
 });
 
 // GET /health — para el ALB health check
