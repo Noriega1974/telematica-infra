@@ -274,11 +274,7 @@ app.post('/stress/start', async (req, res) => {
 });
 
 // GET /health — para el ALB health check
-// Devuelve 503 mientras está bajo stress → el ALB deja de enviar tráfico a esta instancia
 app.get('/health', (req, res) => {
-  if (stressState.running) {
-    return res.status(503).json({ status: 'overloaded', instanceId: INSTANCE_ID });
-  }
   res.status(200).json({ status: 'ok', instanceId: INSTANCE_ID, instanceIp: INSTANCE_IP });
 });
 
