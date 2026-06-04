@@ -56,10 +56,11 @@ jobs:
 
       - name: Verificar deploy
         run: |
-          sleep 15  # Le damos unos segundos más por cortesía para que conecte a la BD antes del test
+          echo "Esperando 30 segundos a que Node.js establezca conexion con RDS..."
+          sleep 30
           ALL_OK=true
           for IP in ${{ steps.get-ips.outputs.instance_ips }}; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 http://$IP:3000/health)
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 http://$IP:3000/health)
             if [ "$STATUS" = "200" ]; then
               echo "ok $IP"
             else
