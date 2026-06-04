@@ -201,7 +201,7 @@ app.post('/usuarios/:id/eliminar', async (req, res) => {
 // Estado del stress — persiste en memoria del proceso
 const { spawn } = require('child_process');
 const { Worker } = require('worker_threads');
-let stressState = { running: false, endTime: null };
+let stressState = { running: false, endTime: null, startTime: null };
 
 // GET /stress — página
 app.get('/stress', (req, res) => {
@@ -237,8 +237,8 @@ app.post('/stress/start', async (req, res) => {
   const segundos = Math.min(parseInt(req.body.segundos) || 120, 300);
   const ms = segundos * 1000;
   const endTime = Date.now() + ms;
-  stressState = { running: true, endTime };
-  setTimeout(() => { stressState = { running: false, endTime: null }; }, ms + 2000);
+  stressState = { running: true, endTime, startTime: Date.now() };
+  setTimeout(() => { stressState = { running: false, endTime: null, startTime: null }; }, ms + 2000);
 
   try {
     await pool.query(`
@@ -250,38 +250,36 @@ app.post('/stress/start', async (req, res) => {
 
   const cpus = os.cpus().length;
 
-  // stress-ng: satura CPU al 100% en todos los cores
-  const proc = spawn('stress-ng', [
-    '--cpu', String(cpus),
-    '--timeout', `${segundos}s`,
-  ], { detached: true, stdio: 'ignore' });
-
-  proc.on('error', () => {
-    // Fallback si stress-ng no está instalado: worker threads agresivos
-    for (let i = 0; i < cpus; i++) {
-      new Worker(`
-        const end = Date.now() + ${ms};
-        let x = Math.random() + 1;
-        while (Date.now() < end) {
-          for (let j = 0; j < 500000; j++) {
-            x = Math.sin(x + 1.1) * Math.cos(x - 0.9) + Math.sqrt(Math.abs(x) + 0.01);
-          }
+  // Worker threads: mecanismo PRINCIPAL — no depende de apt-get, siempre funciona
+  for (let i = 0; i < cpus; i++) {
+    new Worker(`
+      const end = Date.now() + ${ms};
+      let x = ${Math.random() + 0.1};
+      while (Date.now() < end) {
+        for (let j = 0; j < 2000000; j++) {
+          x = Math.sin(x) * Math.cos(x + 1) * Math.tan(x + 2);
+          if (!isFinite(x)) x = 0.5;
         }
-      `, { eval: true });
-    }
-  });
+      }
+    `, { eval: true });
+  }
+
+  // stress-ng: boost adicional si está instalado (no crítico si falla)
+  const proc = spawn('stress-ng', ['--cpu', String(cpus), '--timeout', `${segundos}s`],
+    { detached: true, stdio: 'ignore' });
+  proc.on('error', () => {});
   proc.unref();
 
   res.json({ ok: true, endTime, segundos, instanceId: INSTANCE_ID });
 });
 
 // GET /health — para el ALB health check
+// Devuelve 503 mientras está bajo stress → el ALB deja de enviar tráfico a esta instancia
 app.get('/health', (req, res) => {
-  res.status(200).json({
-    status:     'ok',
-    instanceId: INSTANCE_ID,
-    instanceIp: INSTANCE_IP,
-  });
+  if (stressState.running) {
+    return res.status(503).json({ status: 'overloaded', instanceId: INSTANCE_ID });
+  }
+  res.status(200).json({ status: 'ok', instanceId: INSTANCE_ID, instanceIp: INSTANCE_IP });
 });
 
 // ─── ARRANQUE ─────────────────────────────────────────────────────────────────

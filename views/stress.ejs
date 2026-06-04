@@ -22,8 +22,10 @@
     <div class="card">
       <h2>⚡ Generador de Carga — Auto Scaling Test</h2>
       <p style="color:#64748b;margin-bottom:24px;font-size:14px">
-        Estresa el CPU de <strong><%= instanceId %></strong> al máximo.
-        Si el promedio del ASG supera 70% por ~3 minutos, AWS lanza instancias nuevas.
+        Estresa el CPU de <strong><%= instanceId %></strong> al máximo.<br>
+        El health check de esta instancia empieza a fallar → en ~90s el ALB
+        deja de enviarle tráfico y redirige solo a la instancia sana.<br>
+        Si el promedio del ASG supera 70% por ~3 min, AWS lanza instancias nuevas.
       </p>
 
       <div class="stress-controls">
