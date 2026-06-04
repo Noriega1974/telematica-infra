@@ -62,6 +62,7 @@
 
   <script>
     let pollInterval = null;
+    let wasSeen = false; // true solo si en esta sesión vimos el stress corriendo
 
     async function iniciarStress() {
       const btn = document.getElementById('btn-stress');
@@ -76,9 +77,8 @@
           body: `segundos=${segundos}`
         });
         const data = await res.json();
-
         if (data.ok) {
-          // Actualizar UI inmediatamente sin esperar el primer poll
+          wasSeen = true;
           mostrarContador(data.endTime);
           startPolling();
         }
@@ -93,7 +93,6 @@
       const btn = document.getElementById('btn-stress');
       const resultado = document.getElementById('resultado');
       const remaining = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
-
       btn.disabled = true;
       btn.textContent = `🔥 Corriendo... ${remaining}s`;
       resultado.style.display = 'block';
@@ -108,19 +107,22 @@
         try {
           const res = await fetch('/stress/status');
           const data = await res.json();
-
           const btn = document.getElementById('btn-stress');
           const timerEl = document.getElementById('timer');
           const resultado = document.getElementById('resultado');
 
           if (data.running && data.remaining > 0) {
+            wasSeen = true;
             btn.disabled = true;
             btn.textContent = `🔥 Corriendo... ${data.remaining}s`;
             if (timerEl) timerEl.textContent = data.remaining;
           } else {
             btn.disabled = false;
             btn.textContent = '🔥 Iniciar Stress Test';
-            if (resultado.classList.contains('ok')) {
+            // Solo mostrar "finalizado" si en esta sesión lo vimos corriendo
+            if (wasSeen) {
+              resultado.style.display = 'block';
+              resultado.className = 'stress-result ok';
               resultado.innerHTML = '✅ <strong>Stress finalizado.</strong> Revisá si el ASG escaló en AWS Console → Activity.';
             }
             clearInterval(pollInterval);
@@ -137,9 +139,10 @@
       resultado.innerHTML = `❌ Error: ${msg}`;
     }
 
-    // Al cargar la página, verificar si hay stress activo (persiste al recargar)
+    // Al cargar: solo mostrar estado si ESTA instancia tiene stress activo
     fetch('/stress/status').then(r => r.json()).then(data => {
       if (data.running && data.remaining > 0) {
+        wasSeen = true;
         mostrarContador(Date.now() + data.remaining * 1000);
         startPolling();
       }

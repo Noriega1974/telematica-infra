@@ -217,19 +217,31 @@ app.post('/stress/start', (req, res) => {
   stressState = { running: true, endTime: Date.now() + ms };
   setTimeout(() => { stressState = { running: false, endTime: null }; }, ms + 2000);
 
-  // Un worker por CPU — loop matemático pesado garantizado
   const cpus = os.cpus().length;
-  for (let i = 0; i < cpus; i++) {
-    new Worker(`
-      const end = Date.now() + ${ms};
-      let x = Math.random() + 1;
-      while (Date.now() < end) {
-        for (let j = 0; j < 500000; j++) {
-          x = Math.sin(x + 1.1) * Math.cos(x - 0.9) + Math.sqrt(Math.abs(x) + 0.01);
+
+  // stress-ng: satura CPU al 90% en todos los cores
+  const proc = spawn('stress-ng', [
+    '--cpu', String(cpus),
+    '--cpu-load', '90',
+    '--timeout', `${segundos}s`,
+    '--metrics-brief'
+  ], { detached: true, stdio: 'ignore' });
+
+  proc.on('error', () => {
+    // Fallback si stress-ng no está instalado: worker threads agresivos
+    for (let i = 0; i < cpus; i++) {
+      new Worker(`
+        const end = Date.now() + ${ms};
+        let x = Math.random() + 1;
+        while (Date.now() < end) {
+          for (let j = 0; j < 500000; j++) {
+            x = Math.sin(x + 1.1) * Math.cos(x - 0.9) + Math.sqrt(Math.abs(x) + 0.01);
+          }
         }
-      }
-    `, { eval: true });
-  }
+      `, { eval: true });
+    }
+  });
+  proc.unref();
 
   res.json({ ok: true, endTime: stressState.endTime, segundos, instanceId: INSTANCE_ID });
 });
