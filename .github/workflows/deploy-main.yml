@@ -5,6 +5,9 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   deploy:
     name: Deploy to ASG instances
@@ -29,7 +32,7 @@ jobs:
               "Name=tag:aws:autoscaling:groupName,Values=${{ secrets.ASG_NAME }}" \
               "Name=instance-state-name,Values=running" \
             --query 'Reservations[*].Instances[*].PublicIpAddress' \
-            --output text)
+            --output text | tr '\t\n' '  ' | xargs)
           echo "instance_ips=$IPS" >> $GITHUB_OUTPUT
           echo "Instancias encontradas: $IPS"
 
