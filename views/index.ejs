@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Telemática — Gestión de Usuarios</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+  <!-- BANNER DE INSTANCIA — cambia según a qué EC2 llegaste -->
+  <div class="banner">
+    <span>🖥️ Instancia: <strong><%= instanceId %></strong></span>
+    <span>🌐 IP: <strong><%= instanceIp %></strong></span>
+  </div>
+
+  <div class="container">
+    <h1>Gestión de Usuarios</h1>
+
+    <% if (error) { %>
+      <div class="alert"><%= error %></div>
+    <% } %>
+
+    <!-- FORMULARIO CREAR / EDITAR -->
+    <div class="card">
+      <h2><%= editUser ? '✏️ Editar Usuario' : '➕ Nuevo Usuario' %></h2>
+      <form action="<%= editUser ? `/usuarios/${editUser.id}/actualizar` : '/usuarios' %>" method="POST">
+        <div class="grid">
+
+          <div class="field">
+            <label>Nombre</label>
+            <input type="text" name="nombre" required
+              value="<%= editUser ? editUser.nombre : '' %>" placeholder="Ej: Juan">
+          </div>
+
+          <div class="field">
+            <label>Apellido</label>
+            <input type="text" name="apellido" required
+              value="<%= editUser ? editUser.apellido : '' %>" placeholder="Ej: Pérez">
+          </div>
+
+          <div class="field">
+            <label>Cédula</label>
+            <input type="text" name="cedula" required
+              value="<%= editUser ? editUser.cedula : '' %>" placeholder="Ej: 1234567890">
+          </div>
+
+          <div class="field">
+            <label>Teléfono</label>
+            <input type="tel" name="telefono"
+              value="<%= editUser ? editUser.telefono : '' %>" placeholder="Ej: 3001234567">
+          </div>
+
+          <div class="field">
+            <label>Email</label>
+            <input type="email" name="email" required
+              value="<%= editUser ? editUser.email : '' %>" placeholder="Ej: juan@correo.com">
+          </div>
+
+          <div class="field">
+            <label>Carrera</label>
+            <select name="carrera" required>
+              <option value="">— Seleccioná —</option>
+              <% carreras.forEach(c => { %>
+                <option value="<%= c %>"
+                  <%= editUser && editUser.carrera === c ? 'selected' : '' %>>
+                  <%= c %>
+                </option>
+              <% }) %>
+            </select>
+          </div>
+
+        </div>
+
+        <div class="actions">
+          <button type="submit" class="btn primary">
+            <%= editUser ? 'Guardar Cambios' : 'Crear Usuario' %>
+          </button>
+          <% if (editUser) { %>
+            <a href="/" class="btn secondary">Cancelar</a>
+          <% } %>
+        </div>
+      </form>
+    </div>
+
+    <!-- TABLA DE USUARIOS -->
+    <div class="card">
+      <h2>👥 Usuarios Registrados (<%= usuarios.length %>)</h2>
+      <% if (usuarios.length === 0) { %>
+        <p class="empty">No hay usuarios todavía.</p>
+      <% } else { %>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Nombre</th>
+                <th>Apellido</th>
+                <th>Cédula</th>
+                <th>Teléfono</th>
+                <th>Carrera</th>
+                <th>Email</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% usuarios.forEach(u => { %>
+                <tr>
+                  <td><%= u.nombre %></td>
+                  <td><%= u.apellido %></td>
+                  <td><%= u.cedula %></td>
+                  <td><%= u.telefono || '—' %></td>
+                  <td><%= u.carrera %></td>
+                  <td><%= u.email %></td>
+                  <td class="row-actions">
+                    <a href="/usuarios/<%= u.id %>/editar" class="btn sm edit">Editar</a>
+                    <form action="/usuarios/<%= u.id %>/eliminar" method="POST" style="display:inline"
+                          onsubmit="return confirm('¿Eliminar a <%= u.nombre %>?')">
+                      <button class="btn sm delete">Eliminar</button>
+                    </form>
+                  </td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      <% } %>
+    </div>
+  </div>
+
+</body>
+</html>

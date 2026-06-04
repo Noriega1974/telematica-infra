@@ -1,0 +1,43 @@
+name: Deploy to ASG via SSM
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Deploy to EC2 instances
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Get InService instances from ASG
+        id: get-instances
+        run: |
+          INSTANCE_IDS=$(aws autoscaling describe-auto-scaling-groups \
+            --auto-scaling-group-names ${{ secrets.ASG_NAME }} \
+            --query "AutoScalingGroups[0].Instances[?LifecycleState=='InService'].InstanceId" \
+            --output text | tr '\t' ',')
+          echo "instance_ids=$INSTANCE_IDS" >> $GITHUB_OUTPUT
+          echo "Instancias encontradas: $INSTANCE_IDS"
+
+      - name: Deploy via SSM Run Command
+        run: |
+          aws ssm send-command \
+            --instance-ids ${{ steps.get-instances.outputs.instance_ids }} \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=[
+              "cd /app",
+              "git pull origin main",
+              "npm install --production",
+              "pm2 restart telematica-app"
+            ]' \
+            --comment "Deploy desde GitHub Actions - $(date)" \
+            --output text
