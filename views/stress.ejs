@@ -22,8 +22,8 @@
     <div class="card">
       <h2>⚡ Generador de Carga — Auto Scaling Test</h2>
       <p style="color:#64748b;margin-bottom:24px;font-size:14px">
-        Estresa el CPU de <strong><%= instanceId %></strong> al 90%.
-        Si el promedio del ASG supera 70% por ~3 minutos, AWS lanza instancias nuevas automáticamente.
+        Estresa el CPU de <strong><%= instanceId %></strong> al máximo.
+        Si el promedio del ASG supera 70% por ~3 minutos, AWS lanza instancias nuevas.
       </p>
 
       <div class="stress-controls">
@@ -48,9 +48,9 @@
       <h2>📋 Cómo verificar el Auto Scaling</h2>
       <ol class="instrucciones">
         <li>Iniciá el stress en <strong>esta instancia</strong></li>
-        <li>Abrí otra pestaña del ALB y refrescá — iniciá stress en la <strong>otra instancia</strong> también</li>
-        <li>AWS Console → EC2 → Auto Scaling Groups → <strong>telematica-asg</strong> → Activity</li>
-        <li>En ~3 minutos verás <em>"Launching a new EC2 instance"</em></li>
+        <li>Abrí el ALB en otra pestaña → refrescá hasta caer en la otra instancia → iniciá stress ahí también</li>
+        <li>AWS Console → EC2 → Auto Scaling Groups → <strong>telematica-asg</strong> → Monitoring</li>
+        <li>En ~3 minutos verás <em>"Launching a new EC2 instance"</em> en Activity</li>
         <li>El ASG puede escalar hasta <strong>4 instancias</strong></li>
       </ol>
       <div class="info-box">
@@ -76,12 +76,30 @@
           body: `segundos=${segundos}`
         });
         const data = await res.json();
-        if (data.ok) startPolling();
+
+        if (data.ok) {
+          // Actualizar UI inmediatamente sin esperar el primer poll
+          mostrarContador(data.endTime);
+          startPolling();
+        }
       } catch (err) {
         mostrarError(err.message);
         btn.disabled = false;
         btn.textContent = '🔥 Iniciar Stress Test';
       }
+    }
+
+    function mostrarContador(endTime) {
+      const btn = document.getElementById('btn-stress');
+      const resultado = document.getElementById('resultado');
+      const remaining = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
+
+      btn.disabled = true;
+      btn.textContent = `🔥 Corriendo... ${remaining}s`;
+      resultado.style.display = 'block';
+      resultado.className = 'stress-result ok';
+      resultado.innerHTML = `✅ <strong>Stress activo en <%= instanceId %></strong> — <span id="timer">${remaining}</span>s restantes<br>
+        Monitoreá: AWS Console → EC2 → Auto Scaling Groups → telematica-asg → Monitoring`;
     }
 
     function startPolling() {
@@ -90,30 +108,26 @@
         try {
           const res = await fetch('/stress/status');
           const data = await res.json();
-          actualizarUI(data);
+
+          const btn = document.getElementById('btn-stress');
+          const timerEl = document.getElementById('timer');
+          const resultado = document.getElementById('resultado');
+
+          if (data.running && data.remaining > 0) {
+            btn.disabled = true;
+            btn.textContent = `🔥 Corriendo... ${data.remaining}s`;
+            if (timerEl) timerEl.textContent = data.remaining;
+          } else {
+            btn.disabled = false;
+            btn.textContent = '🔥 Iniciar Stress Test';
+            if (resultado.classList.contains('ok')) {
+              resultado.innerHTML = '✅ <strong>Stress finalizado.</strong> Revisá si el ASG escaló en AWS Console → Activity.';
+            }
+            clearInterval(pollInterval);
+            pollInterval = null;
+          }
         } catch (e) {}
       }, 1000);
-    }
-
-    function actualizarUI(data) {
-      const btn = document.getElementById('btn-stress');
-      const resultado = document.getElementById('resultado');
-
-      if (data.running && data.remaining > 0) {
-        btn.disabled = true;
-        btn.textContent = `🔥 Corriendo... ${data.remaining}s`;
-        resultado.style.display = 'block';
-        resultado.className = 'stress-result ok';
-        resultado.innerHTML = `✅ <strong>Stress activo en ${data.instanceId}</strong> — ${data.remaining}s restantes<br>
-          Monitoreá el CPU en AWS Console → EC2 → Auto Scaling Groups → telematica-asg → Monitoring`;
-      } else {
-        btn.disabled = false;
-        btn.textContent = '🔥 Iniciar Stress Test';
-        if (resultado.style.display !== 'none' && resultado.classList.contains('ok')) {
-          resultado.innerHTML = '✅ <strong>Stress finalizado.</strong> Revisá si el ASG escaló en AWS Console.';
-        }
-        if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
-      }
     }
 
     function mostrarError(msg) {
@@ -123,10 +137,10 @@
       resultado.innerHTML = `❌ Error: ${msg}`;
     }
 
-    // Al cargar la página, consultar si hay stress activo
+    // Al cargar la página, verificar si hay stress activo (persiste al recargar)
     fetch('/stress/status').then(r => r.json()).then(data => {
       if (data.running && data.remaining > 0) {
-        actualizarUI(data);
+        mostrarContador(Date.now() + data.remaining * 1000);
         startPolling();
       }
     });
