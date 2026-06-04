@@ -62,7 +62,8 @@
 
   <script>
     let pollInterval = null;
-    let wasSeen = false; // true solo si en esta sesión vimos el stress corriendo
+    let wasSeen = false;
+    let trackedInstanceId = '<%= instanceId %>';
 
     async function iniciarStress() {
       const btn = document.getElementById('btn-stress');
@@ -78,8 +79,9 @@
         });
         const data = await res.json();
         if (data.ok) {
+          trackedInstanceId = data.instanceId;
           wasSeen = true;
-          mostrarContador(data.endTime);
+          mostrarContador(data.endTime, data.instanceId);
           startPolling();
         }
       } catch (err) {
@@ -89,7 +91,7 @@
       }
     }
 
-    function mostrarContador(endTime) {
+    function mostrarContador(endTime, instanceId) {
       const btn = document.getElementById('btn-stress');
       const resultado = document.getElementById('resultado');
       const remaining = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
@@ -97,7 +99,7 @@
       btn.textContent = `🔥 Corriendo... ${remaining}s`;
       resultado.style.display = 'block';
       resultado.className = 'stress-result ok';
-      resultado.innerHTML = `✅ <strong>Stress activo en <%= instanceId %></strong> — <span id="timer">${remaining}</span>s restantes<br>
+      resultado.innerHTML = `✅ <strong>Stress activo en ${instanceId || trackedInstanceId}</strong> — <span id="timer">${remaining}</span>s restantes<br>
         Monitoreá: AWS Console → EC2 → Auto Scaling Groups → telematica-asg → Monitoring`;
     }
 
@@ -105,7 +107,7 @@
       if (pollInterval) clearInterval(pollInterval);
       pollInterval = setInterval(async () => {
         try {
-          const res = await fetch('/stress/status');
+          const res = await fetch(`/stress/status?instance=${trackedInstanceId}`);
           const data = await res.json();
           const btn = document.getElementById('btn-stress');
           const timerEl = document.getElementById('timer');
@@ -119,7 +121,6 @@
           } else {
             btn.disabled = false;
             btn.textContent = '🔥 Iniciar Stress Test';
-            // Solo mostrar "finalizado" si en esta sesión lo vimos corriendo
             if (wasSeen) {
               resultado.style.display = 'block';
               resultado.className = 'stress-result ok';
@@ -139,11 +140,11 @@
       resultado.innerHTML = `❌ Error: ${msg}`;
     }
 
-    // Al cargar: solo mostrar estado si ESTA instancia tiene stress activo
-    fetch('/stress/status').then(r => r.json()).then(data => {
+    // Al cargar: consultar el estado de ESTA instancia específica (pasa por el ALB pero la DB responde correctamente)
+    fetch(`/stress/status?instance=<%= instanceId %>`).then(r => r.json()).then(data => {
       if (data.running && data.remaining > 0) {
         wasSeen = true;
-        mostrarContador(Date.now() + data.remaining * 1000);
+        mostrarContador(Date.now() + data.remaining * 1000, '<%= instanceId %>');
         startPolling();
       }
     });

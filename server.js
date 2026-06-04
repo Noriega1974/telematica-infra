@@ -45,6 +45,13 @@ async function initDB() {
         created_at          TIMESTAMP DEFAULT NOW()
       )
     `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS stress_state (
+        instance_id VARCHAR(100) PRIMARY KEY,
+        end_time    BIGINT,
+        updated_at  TIMESTAMP DEFAULT NOW()
+      )
+    `);
     console.log('✅ Tabla usuarios lista');
   } catch (err) {
     console.error('⚠️  RDS no disponible (normal en local):', err.message);
@@ -202,29 +209,51 @@ app.get('/stress', (req, res) => {
 });
 
 // GET /stress/status — estado actual (el cliente lo consulta cada segundo)
-app.get('/stress/status', (req, res) => {
-  const remaining = stressState.endTime
-    ? Math.max(0, Math.ceil((stressState.endTime - Date.now()) / 1000))
-    : 0;
-  if (remaining === 0) stressState.running = false;
-  res.json({ running: stressState.running, remaining, instanceId: INSTANCE_ID, instanceIp: INSTANCE_IP });
+app.get('/stress/status', async (req, res) => {
+  const targetInstance = req.query.instance || INSTANCE_ID;
+  let remaining = 0;
+
+  try {
+    const { rows } = await pool.query(
+      'SELECT end_time FROM stress_state WHERE instance_id = $1', [targetInstance]
+    );
+    if (rows[0]) {
+      remaining = Math.max(0, Math.ceil((rows[0].end_time - Date.now()) / 1000));
+    }
+  } catch (e) {
+    // fallback a estado en memoria si la DB no está disponible
+    if (targetInstance === INSTANCE_ID && stressState.endTime) {
+      remaining = Math.max(0, Math.ceil((stressState.endTime - Date.now()) / 1000));
+    }
+  }
+
+  const running = remaining > 0;
+  if (!running && targetInstance === INSTANCE_ID) stressState.running = false;
+  res.json({ running, remaining, instanceId: INSTANCE_ID });
 });
 
 // POST /stress/start — inicia stress en background
-app.post('/stress/start', (req, res) => {
+app.post('/stress/start', async (req, res) => {
   const segundos = Math.min(parseInt(req.body.segundos) || 120, 300);
   const ms = segundos * 1000;
-  stressState = { running: true, endTime: Date.now() + ms };
+  const endTime = Date.now() + ms;
+  stressState = { running: true, endTime };
   setTimeout(() => { stressState = { running: false, endTime: null }; }, ms + 2000);
+
+  try {
+    await pool.query(`
+      INSERT INTO stress_state (instance_id, end_time)
+      VALUES ($1, $2)
+      ON CONFLICT (instance_id) DO UPDATE SET end_time = $2, updated_at = NOW()
+    `, [INSTANCE_ID, endTime]);
+  } catch (e) { /* no crítico — el in-memory sigue funcionando */ }
 
   const cpus = os.cpus().length;
 
-  // stress-ng: satura CPU al 90% en todos los cores
+  // stress-ng: satura CPU al 100% en todos los cores
   const proc = spawn('stress-ng', [
     '--cpu', String(cpus),
-    '--cpu-load', '90',
     '--timeout', `${segundos}s`,
-    '--metrics-brief'
   ], { detached: true, stdio: 'ignore' });
 
   proc.on('error', () => {
@@ -243,7 +272,7 @@ app.post('/stress/start', (req, res) => {
   });
   proc.unref();
 
-  res.json({ ok: true, endTime: stressState.endTime, segundos, instanceId: INSTANCE_ID });
+  res.json({ ok: true, endTime, segundos, instanceId: INSTANCE_ID });
 });
 
 // GET /health — para el ALB health check
